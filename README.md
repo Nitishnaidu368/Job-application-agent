@@ -20,7 +20,7 @@ An autonomous AI agent that scrapes job listings from ZobNest and automatically 
 │  3. Application Filler (Playwright)        │
 │     └─ Detects platform (Lever/Ashby/GH)  │
 │     └─ Fills standard fields                │
-│     └─ Generates custom responses (Claude) │
+│     └─ Generates custom responses (OSS LLM) │
 │     └─ Uploads resume & auto-submits       │
 │                                             │
 │  4. Results Logger                         │
@@ -35,7 +35,7 @@ An autonomous AI agent that scrapes job listings from ZobNest and automatically 
 ### 1. Prerequisites
 
 - Node.js 16+ installed
-- Anthropic API key (Claude API)
+- LLM backend for custom responses
 - Job resumes saved in: `/Users/nitishkandi/Desktop/job/Zobnest_resumes`
   - Filename format: `nitishkandi_[company]_resume.pdf`
 
@@ -57,8 +57,13 @@ cp .env.example .env
 Edit `.env`:
 
 ```env
-ANTHROPIC_API_KEY=your_api_key_here
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+LLM_PROVIDER=groq
+LLM_MODEL=qwen/qwen3.6-27b
+LLM_FALLBACK_MODEL=openai/gpt-oss-20b
+LLM_API_URL=https://api.groq.com/openai/v1/chat/completions
+LLM_API_KEY=
+GROQ_API_KEY=
+GROQ_MODEL=qwen/qwen3.6-27b
 RESUMES_PATH=/Users/nitishkandi/Desktop/job/Zobnest_resumes
 OUTPUT_DIR=./output
 ZOBNEST_URL=https://www.zobnest.in/client/dashboard
@@ -96,7 +101,7 @@ For each job:
 2. Detect platform (Lever/Ashby/Greenhouse)
 3. Fill standard fields (name, email, phone, links)
 4. Upload matched resume
-5. Generate custom question responses using Claude API
+5. Generate custom question responses using the configured LLM backend
 6. Auto-submit form
 7. Log result
 
@@ -136,7 +141,7 @@ Standard answers for common questions:
 - Tech stack
 - Salary (flagged for manual review)
 
-The agent tries to match questions against templates first; if no match, it uses Claude API to generate a response.
+The agent tries to match questions against templates first; if no match, it uses the configured LLM backend to generate a response.
 
 ## Platform Support
 
@@ -172,9 +177,9 @@ The agent tries to match questions against templates first; if no match, it uses
 - Check logs for platform detection logic
 - May need to add custom platform handler
 
-### "Claude API error"
-- Verify `ANTHROPIC_API_KEY` is set correctly in `.env`
-- Check API key has sufficient quota
+### "LLM backend error"
+- Verify `LLM_PROVIDER`, `LLM_MODEL`, and `LLM_API_URL` are set correctly in `.env`
+- If using a local model server, make sure it is running and reachable
 - Review error details in logs
 
 ### "Form validation errors"
@@ -273,7 +278,7 @@ Private project for personal use.
 
 **Built with:**
 - Playwright (browser automation)
-- Anthropic Claude API (AI responses)
+- Configured LLM backend (AI responses)
 - Node.js (runtime)
 
 **Last updated:** July 2026

@@ -70,7 +70,12 @@ class ApplicationFiller {
                 return result;
             }
 
-            const browser = await chromium.launch({ headless: config.playwright.headless });
+            const launchOptions = { headless: config.playwright.headless };
+            if (config.playwright.executablePath) {
+                launchOptions.executablePath = config.playwright.executablePath;
+            }
+
+            const browser = await chromium.launch(launchOptions);
             try {
                 const page = await browser.newPage();
                 page.setDefaultNavigationTimeout(config.playwright.navTimeoutMs);

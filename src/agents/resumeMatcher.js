@@ -9,39 +9,53 @@ function normalize(input) {
         .replace(/^_+|_+$/g, '');
 }
 
+function isCompanyResume(fileName, normalizedCompany) {
+    if (path.extname(fileName).toLowerCase() !== '.pdf') return false;
+
+    const stem = normalize(path.basename(fileName, path.extname(fileName)));
+    const expectedStem = `nitishkandi_${normalizedCompany}_resume`;
+    if (!stem.startsWith(expectedStem)) return false;
+
+    const suffix = stem.slice(expectedStem.length);
+    return suffix === '' || /^_(?:\d+|copy|current|final|latest)$/.test(suffix);
+}
+
 class ResumeMatcher {
-    constructor(logger) {
+    constructor(logger, resumesDir = config.paths.resumesDir) {
         this.logger = logger;
+        this.resumesDir = resumesDir;
     }
 
     findResumeForCompany(company) {
-        if (!fs.existsSync(config.paths.resumesDir)) {
-            throw new Error(`Resume directory not found: ${config.paths.resumesDir}`);
-        }
-
-        const files = fs.readdirSync(config.paths.resumesDir);
         const normalizedCompany = normalize(company);
-
-        const directMatch = files.find((file) => {
-            const lower = file.toLowerCase();
-            return lower.endsWith('.pdf') && lower.includes(`nitishkandi_${normalizedCompany}`);
-        });
-
-        if (directMatch) {
-            return path.join(config.paths.resumesDir, directMatch);
+        if (!normalizedCompany) {
+            this.logger?.warn('Cannot match a resume without a company name.');
+            return null;
         }
 
-        const fuzzyMatch = files.find((file) => {
-            const lower = file.toLowerCase();
-            return lower.endsWith('.pdf') && lower.startsWith('nitishkandi_') && lower.includes(normalizedCompany.split('_')[0]);
-        });
-
-        if (fuzzyMatch) {
-            return path.join(config.paths.resumesDir, fuzzyMatch);
+        if (!fs.existsSync(this.resumesDir) || !fs.statSync(this.resumesDir).isDirectory()) {
+            throw new Error(`Resume directory not found: ${this.resumesDir}`);
         }
 
-        return null;
+        const matches = fs.readdirSync(this.resumesDir, { withFileTypes: true })
+            .filter((entry) => entry.isFile() && isCompanyResume(entry.name, normalizedCompany))
+            .map((entry) => {
+                const filePath = path.join(this.resumesDir, entry.name);
+                return { filePath, fileName: entry.name, modifiedAt: fs.statSync(filePath).mtimeMs };
+            })
+            .sort((a, b) => b.modifiedAt - a.modifiedAt || a.fileName.localeCompare(b.fileName));
+
+        if (!matches.length) {
+            this.logger?.warn(`No exact company resume found for ${company}.`);
+            return null;
+        }
+
+        const selected = matches[0];
+        this.logger?.info(
+            `Selected newest exact resume for ${company}: ${selected.fileName} (${matches.length} matching version${matches.length === 1 ? '' : 's'}).`
+        );
+        return selected.filePath;
     }
 }
 
-module.exports = { ResumeMatcher };
+module.exports = { ResumeMatcher, normalize, isCompanyResume };

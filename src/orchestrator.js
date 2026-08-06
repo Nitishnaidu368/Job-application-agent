@@ -4,11 +4,13 @@ const { config } = require('./config');
 const { logger } = require('./logger');
 const { ZobnestExtractor } = require('./agents/zobnestExtractor');
 const { ApplicationFiller } = require('./agents/applicationFiller');
+const { ResumeDownloader } = require('./agents/resumeDownloader');
 
 class Orchestrator {
     constructor() {
         this.extractor = new ZobnestExtractor(logger);
         this.applicationFiller = new ApplicationFiller(logger);
+        this.resumeDownloader = new ResumeDownloader(logger);
     }
 
     ensureOutputDir() {
@@ -70,6 +72,10 @@ class Orchestrator {
 
     async run() {
         this.ensureOutputDir();
+
+        if (config.paths.resumeSourceDir) {
+            this.resumeDownloader.syncResumes(config.paths.resumeSourceDir, config.paths.resumesDir);
+        }
 
         const runId = `run-${Date.now()}`;
         logger.info(`Starting run ${runId}`);

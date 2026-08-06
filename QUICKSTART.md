@@ -22,15 +22,20 @@ cd ~/path/to/your/workspace/job-application-agent
 # Copy environment template
 cp .env.example .env
 
-# Edit .env with your API key
+# Edit .env with your LLM backend settings
 nano .env
 ```
 
-Paste your Anthropic API key:
+Use GroqCloud with Qwen 3.6 27B for the first version:
 
 ```env
-ANTHROPIC_API_KEY=sk-ant-... (your actual key)
-ANTHROPIC_MODEL=claude-3-5-sonnet-20241022
+LLM_PROVIDER=groq
+LLM_MODEL=qwen/qwen3.6-27b
+LLM_FALLBACK_MODEL=openai/gpt-oss-20b
+LLM_API_URL=https://api.groq.com/openai/v1/chat/completions
+LLM_API_KEY=
+GROQ_API_KEY=
+GROQ_MODEL=qwen/qwen3.6-27b
 RESUMES_PATH=/Users/nitishkandi/Desktop/job/Zobnest_resumes
 ```
 
@@ -75,14 +80,14 @@ cat output/job-agent-YYYY-MM-DD.log
 
 ## Common Issues & Quick Fixes
 
-### Issue: "ANTHROPIC_API_KEY is not set"
+### Issue: "LLM backend error" or fallback responses only
 **Fix:**
 ```bash
 # Make sure .env file is in the root directory
 ls -la .env
 
-# Verify the key is there:
-cat .env | grep ANTHROPIC_API_KEY
+# Verify the LLM settings are there:
+cat .env | grep LLM_
 ```
 
 ### Issue: "Resume directory not found"
