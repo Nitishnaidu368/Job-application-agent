@@ -21,7 +21,7 @@ An autonomous AI agent that scrapes job listings from ZobNest and automatically 
 │     └─ Detects platform (Lever/Ashby/GH)  │
 │     └─ Fills standard fields                │
 │     └─ Generates custom responses (OSS LLM) │
-│     └─ Uploads resume & auto-submits       │
+│     └─ Uploads resume & waits for review   │
 │                                             │
 │  4. Results Logger                         │
 │     └─ Outputs: applications.json          │
@@ -102,8 +102,9 @@ For each job:
 3. Fill standard fields (name, email, phone, links)
 4. Upload matched resume
 5. Generate custom question responses using the configured LLM backend
-6. Auto-submit form
-7. Log result
+6. Wait for you to review and manually submit the form
+7. Detect submission and continue to the next job
+8. Log result
 
 ### Step 4: Generate Report
 - Saves detailed results to `output/applications.json`
@@ -149,13 +150,13 @@ The agent tries to match questions against templates first; if no match, it uses
 - ✅ Standard fields (name, email, phone, links)
 - ✅ Resume upload
 - ✅ Custom questions
-- ✅ Auto-submit
+- ✅ Manual review before submission
 
 ### Ashby
 - ✅ Standard fields
 - ✅ Resume upload
 - ✅ Custom questions
-- ✅ Auto-submit
+- ✅ Manual review before submission
 
 ### Greenhouse
 - ✅ First/last name
@@ -163,7 +164,7 @@ The agent tries to match questions against templates first; if no match, it uses
 - ✅ Resume upload
 - ✅ Preferences (remote, relocation)
 - ✅ Custom questions
-- ✅ Auto-submit
+- ✅ Manual review before submission
 
 ## Troubleshooting
 

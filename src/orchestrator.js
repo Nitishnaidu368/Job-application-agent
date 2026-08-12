@@ -4,13 +4,11 @@ const { config } = require('./config');
 const { logger } = require('./logger');
 const { ZobnestExtractor } = require('./agents/zobnestExtractor');
 const { ApplicationFiller } = require('./agents/applicationFiller');
-const { ResumeDownloader } = require('./agents/resumeDownloader');
 
 class Orchestrator {
     constructor() {
         this.extractor = new ZobnestExtractor(logger);
         this.applicationFiller = new ApplicationFiller(logger);
-        this.resumeDownloader = new ResumeDownloader(logger);
     }
 
     ensureOutputDir() {
@@ -30,9 +28,10 @@ class Orchestrator {
                 if (item.status === 'submitted') acc.submitted += 1;
                 if (item.status === 'failed') acc.failed += 1;
                 if (item.status === 'skipped') acc.skipped += 1;
+                if (item.status === 'ready_for_review') acc.readyForReview += 1;
                 return acc;
             },
-            { totalProcessed: 0, submitted: 0, failed: 0, skipped: 0 }
+            { totalProcessed: 0, submitted: 0, failed: 0, skipped: 0, readyForReview: 0 }
         );
 
         const successRate = totals.totalProcessed
@@ -73,10 +72,6 @@ class Orchestrator {
     async run() {
         this.ensureOutputDir();
 
-        if (config.paths.resumeSourceDir) {
-            this.resumeDownloader.syncResumes(config.paths.resumeSourceDir, config.paths.resumesDir);
-        }
-
         const runId = `run-${Date.now()}`;
         logger.info(`Starting run ${runId}`);
 
@@ -91,7 +86,7 @@ class Orchestrator {
         const summary = this.buildSummary(results);
         this.writeJson('summary.json', summary);
 
-        logger.info(`Run complete. Submitted: ${summary.submitted}, Failed: ${summary.failed}, Skipped: ${summary.skipped}`);
+        logger.info(`Run complete. Submitted: ${summary.submitted}, Ready for review: ${summary.readyForReview}, Failed: ${summary.failed}, Skipped: ${summary.skipped}`);
     }
 }
 

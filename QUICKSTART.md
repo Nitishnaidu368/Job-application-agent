@@ -55,7 +55,7 @@ npm start
 - Browser opens to ZobNest dashboard
 - Scrapes jobs from "Latest Jobs" section
 - Matches resumes to jobs
-- Fills and submits applications
+- Fills applications and waits for you to review and submit each one
 - Generates `output/summary.json` with results
 
 ## 4. Check Results
@@ -110,11 +110,11 @@ nitishkandi_monogram_health_resume.pdf
 - Check that "Latest Jobs" section is visible on the dashboard
 - Verify jobs are in "Not Applied" status
 
-### Issue: Application not submitted (form verification failed)
+### Issue: Submission is not detected after you click Submit
 **Fix:**
 - Check logs for specific field errors
 - Some forms may have unexpected field requirements
-- Manually complete and submit this application, then run agent for next batch
+- Confirm the application site shows a success message; the agent will then continue to the next job
 
 ## Next Steps
 
@@ -148,4 +148,4 @@ Once confirmed working:
 
 **You're all set!** 🚀
 
-The agent is now ready to autonomously fill out job applications. Good luck with your applications!
+The agent is now ready to fill applications and pause for your approval before every submission.

@@ -1,5 +1,9 @@
+const fs = require('fs');
+const path = require('path');
 const { chromium } = require('playwright');
 const { config } = require('../config');
+
+const SUPPORTED_PLATFORM = /(lever|ashby|greenhouse)/i;
 
 class ZobnestExtractor {
     constructor(logger) {
@@ -52,6 +56,73 @@ class ZobnestExtractor {
         return { page, close: () => browser.close() };
     }
 
+    async isLoginRequired(page) {
+        return page.evaluate(() => {
+            const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+            return /client login required|login required/i.test(bodyText);
+        });
+    }
+
+    async downloadResume(page, href, runId) {
+        const absoluteUrl = new URL(href, config.zobnest.dashboardUrl).toString();
+        const response = await page.context().request.get(absoluteUrl);
+
+        if (!response.ok()) {
+            this.logger.warn(`Resume download failed for run ${runId}: HTTP ${response.status()}`);
+            return null;
+        }
+
+        fs.mkdirSync(config.paths.resumesDir, { recursive: true });
+        const targetPath = path.join(config.paths.resumesDir, `zobnest_run_${runId}_resume.pdf`);
+        fs.writeFileSync(targetPath, await response.body());
+        return targetPath;
+    }
+
+    async extractRows(page) {
+        const rows = page.locator('tr.job-row');
+        const count = await rows.count();
+        const jobs = [];
+
+        for (let i = 0; i < count; i += 1) {
+            const row = rows.nth(i);
+            const runId = await row.getAttribute('data-run-id');
+
+            const companyLink = row.locator('td.col-company a').first();
+            const applicationUrl = (await companyLink.getAttribute('href')) || '';
+            const company = (await companyLink.innerText()).trim();
+            const location = (await row.locator('td.col-location').innerText()).trim();
+            const status = (await row.locator('td.col-status').innerText()).trim();
+
+            if (!SUPPORTED_PLATFORM.test(applicationUrl)) {
+                this.logger.debug(`Skipping run ${runId} (${company}): unsupported platform.`);
+                continue;
+            }
+
+            if (!/completed/i.test(status)) {
+                this.logger.debug(`Skipping run ${runId} (${company}): resume status is "${status}".`);
+                continue;
+            }
+
+            const pdfLink = row.locator('td.col-file a[href$="/pdf"]').first();
+            const href = (await pdfLink.count()) ? await pdfLink.getAttribute('href') : null;
+            const resumePath = href ? await this.downloadResume(page, href, runId) : null;
+
+            if (!resumePath) {
+                this.logger.warn(`No resume downloaded for run ${runId} (${company}); this job will be skipped when applying.`);
+            }
+
+            jobs.push({
+                zobnestRunId: runId,
+                company: company || 'Unknown Company',
+                location: location || 'Unknown',
+                applicationUrl,
+                resumePath
+            });
+        }
+
+        return jobs;
+    }
+
     async extract() {
         this.logger.info(`Opening ZobNest dashboard: ${config.zobnest.dashboardUrl}`);
         const session = await this.openDashboardPage();
@@ -64,138 +135,18 @@ class ZobnestExtractor {
             await page.goto(config.zobnest.dashboardUrl, { waitUntil: 'domcontentloaded' });
             await page.waitForTimeout(2000);
 
-            let payload = await page.evaluate(() => {
-                const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-                const bodyText = normalizeText(document.body?.innerText || '');
-
-                if (/client login required/i.test(bodyText) || /login required/i.test(bodyText)) {
-                    return { loginRequired: true, jobs: [] };
-                }
-
-                const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]'));
-                const heading = headings.find((node) => /latest jobs/i.test(normalizeText(node.textContent)));
-                const sectionRoot = heading?.closest('section, article, div, main, table') || heading?.parentElement || document.body;
-
-                const candidateElements = Array.from(
-                    sectionRoot.querySelectorAll('a[href], button, [role="button"], [data-href], [data-url], [onclick]')
-                );
-
-                const jobs = [];
-                const seen = new Set();
-
-                for (const element of candidateElements) {
-                    const href = element.href || element.getAttribute('data-href') || element.getAttribute('data-url') || '';
-                    const text = normalizeText(element.textContent || element.innerText || '');
-                    const container = element.closest('tr, li, article, section, div, .card, .job, .job-card, .table-row');
-                    const containerText = normalizeText(container?.innerText || text);
-                    const applicationUrl = href && /^https?:\/\//i.test(href) ? href : '';
-                    const looksLikeApplicationLink = /(lever|ashby|greenhouse|boards\.|jobs\.)/i.test(applicationUrl);
-                    const looksLikeJobCard = /apply|view job|open role|job details|latest jobs/i.test(containerText) || /apply|view job|open role|job details/i.test(text);
-
-                    if (!applicationUrl || (!looksLikeApplicationLink && !looksLikeJobCard)) {
-                        continue;
-                    }
-
-                    const cells = container ? Array.from(container.querySelectorAll('td, .cell, [data-label]')) : [];
-                    const company = normalizeText(
-                        cells[0]?.textContent ||
-                        container?.querySelector('[data-company]')?.textContent ||
-                        container?.querySelector('.company')?.textContent ||
-                        containerText.split(/\s{2,}|\n/)[0] ||
-                        text
-                    );
-                    const location = normalizeText(
-                        cells[1]?.textContent ||
-                        container?.querySelector('[data-location]')?.textContent ||
-                        container?.querySelector('.location')?.textContent ||
-                        containerText.split(/\s{2,}|\n/)[1] ||
-                        'Unknown'
-                    );
-
-                    if (seen.has(applicationUrl)) continue;
-                    seen.add(applicationUrl);
-                    jobs.push({
-                        company: company || 'Unknown Company',
-                        location: location || 'Unknown',
-                        applicationUrl
-                    });
-                }
-
-                return { loginRequired: false, jobs };
-            });
-
-            if (payload.loginRequired) {
+            if (await this.isLoginRequired(page)) {
                 await this.signIn(page);
                 await page.goto(config.zobnest.dashboardUrl, { waitUntil: 'domcontentloaded' });
                 await page.waitForTimeout(2000);
-                payload = await page.evaluate(() => {
-                    const normalizeText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
-                    const bodyText = normalizeText(document.body?.innerText || '');
 
-                    if (/client login required/i.test(bodyText) || /login required/i.test(bodyText)) {
-                        return { loginRequired: true, jobs: [] };
-                    }
-
-                    const headings = Array.from(document.querySelectorAll('h1, h2, h3, h4, h5, h6, [role="heading"]'));
-                    const heading = headings.find((node) => /latest jobs/i.test(normalizeText(node.textContent)));
-                    const sectionRoot = heading?.closest('section, article, div, main, table') || heading?.parentElement || document.body;
-
-                    const candidateElements = Array.from(
-                        sectionRoot.querySelectorAll('a[href], button, [role="button"], [data-href], [data-url], [onclick]')
-                    );
-
-                    const jobs = [];
-                    const seen = new Set();
-
-                    for (const element of candidateElements) {
-                        const href = element.href || element.getAttribute('data-href') || element.getAttribute('data-url') || '';
-                        const text = normalizeText(element.textContent || element.innerText || '');
-                        const container = element.closest('tr, li, article, section, div, .card, .job, .job-card, .table-row');
-                        const containerText = normalizeText(container?.innerText || text);
-                        const applicationUrl = href && /^https?:\/\//i.test(href) ? href : '';
-                        const looksLikeApplicationLink = /(lever|ashby|greenhouse|boards\.|jobs\.)/i.test(applicationUrl);
-                        const looksLikeJobCard = /apply|view job|open role|job details|latest jobs/i.test(containerText) || /apply|view job|open role|job details/i.test(text);
-
-                        if (!applicationUrl || (!looksLikeApplicationLink && !looksLikeJobCard)) {
-                            continue;
-                        }
-
-                        const cells = container ? Array.from(container.querySelectorAll('td, .cell, [data-label]')) : [];
-                        const company = normalizeText(
-                            cells[0]?.textContent ||
-                            container?.querySelector('[data-company]')?.textContent ||
-                            container?.querySelector('.company')?.textContent ||
-                            containerText.split(/\s{2,}|\n/)[0] ||
-                            text
-                        );
-                        const location = normalizeText(
-                            cells[1]?.textContent ||
-                            container?.querySelector('[data-location]')?.textContent ||
-                            container?.querySelector('.location')?.textContent ||
-                            containerText.split(/\s{2,}|\n/)[1] ||
-                            'Unknown'
-                        );
-
-                        if (seen.has(applicationUrl)) continue;
-                        seen.add(applicationUrl);
-                        jobs.push({
-                            company: company || 'Unknown Company',
-                            location: location || 'Unknown',
-                            applicationUrl
-                        });
-                    }
-
-                    return { loginRequired: false, jobs };
-                });
-
-                if (payload.loginRequired) {
+                if (await this.isLoginRequired(page)) {
                     throw new Error('ZobNest login failed. Verify ZOBNEST_USERNAME and ZOBNEST_PASSWORD in .env.');
                 }
             }
 
-            const jobs = payload.jobs;
-
-            this.logger.info(`Extracted ${jobs.length} potential jobs from dashboard.`);
+            const jobs = await this.extractRows(page);
+            this.logger.info(`Extracted ${jobs.length} applicable jobs from dashboard (supported platform + completed resume).`);
             return jobs;
         } finally {
             await session.close();

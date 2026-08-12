@@ -65,6 +65,15 @@ const config = {
         willingToRelocate: true,
         willingToTravelPercent: 75,
         startDate: 'Immediately available',
+        startYear: '2026',
+        applicationSource: 'LinkedIn',
+        eeo: {
+            gender: 'Male',
+            race: 'Asian',
+            ethnicity: 'No',
+            veteranStatus: 'I am not a protected veteran',
+            disabilityStatus: 'No, I do not have a disability and have not had one in the past'
+        },
         skills: [
             'Java',
             'Python',
@@ -104,13 +113,15 @@ const config = {
         education: [
             {
                 institution: 'University at Buffalo, SUNY',
-                degree: 'MS Data Science & Applications',
+                degree: 'Master of Science',
+                field: 'Data Science and Applications',
                 start: 'Aug 2024',
                 end: 'Dec 2025'
             },
             {
                 institution: 'Vellore Institute of Technology',
-                degree: 'BTech Computer Science & Engineering',
+                degree: 'Bachelor of Technology',
+                field: 'Computer Science and Engineering',
                 start: 'Jul 2018',
                 end: 'Jun 2021'
             }
