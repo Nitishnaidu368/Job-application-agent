@@ -7,7 +7,7 @@
         "start": "node index.js",
         "dev": "LOG_LEVEL=debug node index.js",
         "dry-run": "DRY_RUN=true node index.js",
-        "test": "node test/resumeMatcher.test.js && node test/applicationFiller.test.js && node test/claudeClient.test.js && node test/learnedAnswers.test.js",
+        "test": "node test/resumeMatcher.test.js && node test/applicationFiller.test.js && node test/claudeClient.test.js && node test/learnedAnswers.test.js && node test/addressBook.test.js && node test/browserFillEngine.test.js",
         "lint": "echo \"No linter configured yet\"",
         "stage:scrape": "node scripts/testScrape.js"
     },

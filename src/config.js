@@ -57,6 +57,9 @@ const config = {
         preferredName: 'Nitish Kandi',
         email: 'kandinitishnaidu@gmail.com',
         phone: '+1-716-907-8300',
+        // Street line only — city/state/zip/country are resolved per job location via
+        // addressBook.js instead, since those should follow where the job actually is.
+        streetAddress: '',
         linkedin: 'https://www.linkedin.com/in/nitishk12/',
         github: 'https://github.com/Nitishnaidu368',
         portfolio: 'https://nitish-portifolio.vercel.app/',

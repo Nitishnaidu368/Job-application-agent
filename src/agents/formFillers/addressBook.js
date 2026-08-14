@@ -94,6 +94,13 @@ function generateZip(state) {
     return `${prefix}${suffix}`;
 }
 
+// Every entry in KNOWN_ADDRESSES is a US state code except Toronto's 'ON'.
+const CANADIAN_PROVINCES = new Set(['ON']);
+
+function countryForState(state) {
+    return CANADIAN_PROVINCES.has(state) ? 'Canada' : 'United States';
+}
+
 function resolveAddress(jobLocation) {
     const parsed = parseJobLocation(jobLocation);
     if (!parsed) return null;
@@ -101,9 +108,9 @@ function resolveAddress(jobLocation) {
     const exact = KNOWN_ADDRESSES.find(
         (a) => a.city.toLowerCase() === parsed.city.toLowerCase() && a.state === parsed.state
     );
-    if (exact) return exact;
+    if (exact) return { ...exact, country: countryForState(exact.state) };
 
-    return { city: parsed.city, state: parsed.state, zipCode: generateZip(parsed.state) };
+    return { city: parsed.city, state: parsed.state, zipCode: generateZip(parsed.state), country: countryForState(parsed.state) };
 }
 
 module.exports = { KNOWN_ADDRESSES, resolveAddress };

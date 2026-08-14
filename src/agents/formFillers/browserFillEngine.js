@@ -24,7 +24,7 @@
         { type: 'state', patterns: [/^state$/i, /province/i, /state[\s_-]?province/i, /region/i] },
         { type: 'zipCode', patterns: [/zip/i, /postal/i, /post[\s_-]?code/i] },
         { type: 'country', patterns: [/^country$/i, /country[\s_-]?name/i] },
-        { type: 'address', patterns: [/street[\s_-]?address/i, /^address$/i, /mailing[\s_-]?address/i] },
+        { type: 'address', patterns: [/street[\s_-]?address/i, /^address$/i, /mailing[\s_-]?address/i, /address\s*line\s*1/i, /^street(\s*address)?$/i, /^address\s*1$/i] },
         { type: 'linkedIn', patterns: [/linkedin/i, /linked[\s_-]?in/i] },
         { type: 'github', patterns: [/github/i, /git[\s_-]?hub/i] },
         { type: 'portfolio', patterns: [/portfolio/i, /personal[\s_-]?site/i, /work[\s_-]?samples/i] },
@@ -56,11 +56,27 @@
         { type: 'yearsExperience', patterns: [/years[\s_-]?of[\s_-]?experience/i, /experience[\s_-]?years/i, /how[\s_-]?many[\s_-]?years/i] }
     ];
 
-    function identifyFieldType(text) {
-        const normalized = String(text || '').toLowerCase().trim();
+    // Anchored patterns (e.g. /^city$/i) are meant to recognize a field whose label IS
+    // essentially just "City" — but a required field's label almost always carries a
+    // trailing marker ("City*", "Country*"), and appending the element's context (name/id/
+    // placeholder) after the label means the marker (and any noise after it) is rarely at
+    // the very end of the combined string either. Anchored patterns are matched against the
+    // label alone, with the marker stripped, so "City*" still resolves to type 'city'
+    // regardless of what non-informative context gets appended; non-anchored (substring)
+    // patterns keep matching against label+context as before, since those already tolerate
+    // extra text.
+    function identifyFieldType(label, context) {
+        const normalizedLabel = String(label || '')
+            .toLowerCase()
+            .replace(/\s*(\(required\)|[*:])+\s*$/i, '')
+            .trim();
+        const normalizedFull = `${normalizedLabel} ${String(context || '').toLowerCase().trim()}`.trim();
+
         for (const { type, patterns } of FIELD_PATTERNS) {
             for (const pattern of patterns) {
-                if (pattern.test(normalized)) return { type, confidence: 0.9 };
+                const isAnchored = pattern.source.startsWith('^') && pattern.source.endsWith('$');
+                const haystack = isAnchored ? normalizedLabel : normalizedFull;
+                if (pattern.test(haystack)) return { type, confidence: 0.9 };
             }
         }
         return { type: 'unknown', confidence: 0 };
@@ -194,13 +210,13 @@
             if (['radio', 'checkbox', 'hidden'].includes(el.type)) return;
             if (!isVisible(el)) return;
             const label = getLabelFor(el);
-            const { type, confidence } = identifyFieldType(`${label} ${getFieldContext(el)}`);
+            const { type, confidence } = identifyFieldType(label, getFieldContext(el));
             if (type !== 'unknown' && confidence > 0.5) fields.push({ element: el, fieldType: type, platform: 'ashby', label: label || type });
         });
 
         searchRoot.querySelectorAll('select').forEach((el) => {
             const label = getLabelFor(el);
-            const { type, confidence } = identifyFieldType(`${label} ${getFieldContext(el)}`);
+            const { type, confidence } = identifyFieldType(label, getFieldContext(el));
             if (type !== 'unknown' && confidence > 0.5) fields.push({ element: el, fieldType: type, platform: 'ashby', label: label || type });
         });
 
@@ -239,7 +255,7 @@
             if (!isVisible(el)) return;
             const context = getFieldContext(el);
             const label = getLabelFor(el);
-            const { type, confidence } = identifyFieldType(`${label} ${context}`);
+            const { type, confidence } = identifyFieldType(label, context);
             if (type !== 'unknown' && confidence > 0.5) {
                 fields.push({ element: el, fieldType: type, platform, label: label || context.substring(0, 40) });
             }
@@ -449,7 +465,7 @@
             case 'state': return personal.state || null;
             case 'zipCode': return personal.zipCode || null;
             case 'country': return personal.country || null;
-            case 'address': return personal.location || null;
+            case 'address': return personal.streetAddress || null;
             case 'linkedIn': return personal.linkedIn || null;
             case 'github': return personal.github || null;
             case 'portfolio': return personal.portfolio || null;
@@ -1151,6 +1167,6 @@
         fillApplication,
         findRequiredEmptyFields,
         applyCatchAllValue,
-        __debug: { detectFields, getValueForField }
+        __debug: { detectFields, getValueForField, identifyFieldType }
     };
 })();
