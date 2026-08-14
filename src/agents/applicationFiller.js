@@ -83,6 +83,15 @@ class ApplicationFiller {
         return formPage;
     }
 
+    logFlaggedAnswers(flagged) {
+        if (!flagged?.length) return;
+        flagged.forEach((f) => {
+            const optionsText = f.options ? ` — options: ${f.options.join(', ')}` : '';
+            const status = f.value === null ? 'left blank, needs your input' : `guessed "${f.value}" (low confidence)`;
+            this.logger.warn(`NEEDS REVIEW: "${f.label}"${optionsText} — ${status}`);
+        });
+    }
+
     async waitForManualSubmission(page) {
         const reviewUrl = page.url();
         const formWasPresent = await this.hasApplicationForm(page);
@@ -124,7 +133,8 @@ class ApplicationFiller {
             status: 'skipped',
             error: null,
             resumePath: null,
-            submittedAt: null
+            submittedAt: null,
+            flaggedAnswers: []
         };
 
         try {
@@ -164,7 +174,8 @@ class ApplicationFiller {
                 page = await this.openApplicationForm(page);
                 page.setDefaultNavigationTimeout(config.playwright.navTimeoutMs);
                 page.setDefaultTimeout(config.playwright.actionTimeoutMs);
-                await filler.fillForm(page, job, resumePath);
+                result.flaggedAnswers = await filler.fillForm(page, job, resumePath);
+                this.logFlaggedAnswers(result.flaggedAnswers);
 
                 await this.waitForManualSubmission(page);
 

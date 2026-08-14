@@ -1014,7 +1014,12 @@
                 const group = el.name
                     ? Array.from(document.querySelectorAll(`input[type="${el.type}"][name="${cssEscape(el.name)}"]`))
                     : [el];
-                if (!group.some(isRequiredField)) continue;
+                const groupRequired = group.some(isRequiredField);
+                // Radio groups are surfaced even when optional (a dynamic screening
+                // question left unanswered is the exact "unexpected dropdown" case this
+                // pass exists for); plain checkboxes stay required-only since an optional
+                // one (e.g. marketing consent) should default to unchecked, not guessed.
+                if (el.type === 'checkbox' && !groupRequired) continue;
 
                 if (el.type === 'checkbox') {
                     const buttonGroup = findClickableButtonGroup(el);
@@ -1041,7 +1046,8 @@
                             id,
                             label: getLabelFor(el) || getFieldContext(el),
                             elementType: 'click-group',
-                            options: buttonGroup.map((b) => (b.textContent || '').trim())
+                            options: buttonGroup.map((b) => (b.textContent || '').trim()),
+                            required: groupRequired
                         });
                         continue;
                     }
@@ -1052,15 +1058,20 @@
                 const id = `catchall-${counter++}`;
                 group.forEach((g) => g.setAttribute(CATCHALL_ID_ATTR, id));
                 const options = el.type === 'radio' ? group.map(getRadioOptionText).filter(Boolean) : null;
-                gaps.push({ id, label: getLabelFor(el) || getFieldContext(el), elementType: el.type === 'radio' ? 'radio-group' : 'checkbox', options });
+                gaps.push({ id, label: getLabelFor(el) || getFieldContext(el), elementType: el.type === 'radio' ? 'radio-group' : 'checkbox', options, required: groupRequired });
                 continue;
             }
 
-            if (!isRequiredField(el) || !isEmptyValue(el)) continue;
+            const isSelect = el.tagName === 'SELECT';
+            const elRequired = isRequiredField(el);
+            // Selects are surfaced even when optional — same reasoning as radio groups
+            // above. Free text/textarea stay required-only: an optional essay question
+            // left blank is fine, whereas an optional dropdown stuck on its placeholder
+            // usually isn't.
+            if (!isEmptyValue(el) || (!isSelect && !elRequired)) continue;
 
             const id = `catchall-${counter++}`;
             el.setAttribute(CATCHALL_ID_ATTR, id);
-            const isSelect = el.tagName === 'SELECT';
             const options = isSelect
                 ? Array.from(el.options)
                     .map((opt) => opt.text.trim())
@@ -1070,7 +1081,8 @@
                 id,
                 label: getLabelFor(el) || getFieldContext(el),
                 elementType: isSelect ? 'select' : (el.tagName === 'TEXTAREA' ? 'textarea' : 'text'),
-                options
+                options,
+                required: elRequired
             });
         }
 

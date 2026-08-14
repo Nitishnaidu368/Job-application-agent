@@ -1,5 +1,6 @@
 const axios = require('axios');
 const { config } = require('../config');
+const { bestOptionMatch } = require('./optionMatcher');
 
 class ClaudeClient {
     constructor(logger) {
@@ -91,6 +92,12 @@ class ClaudeClient {
 
     fallbackResponse() {
         return 'I would be happy to discuss this in more detail during the interview process.';
+    }
+
+    // Kept as a thin wrapper so existing call sites/tests don't need to know the scorer
+    // moved to a shared module (learnedAnswers.js uses the same one for label matching).
+    bestOptionMatch(answer, options) {
+        return bestOptionMatch(answer, options);
     }
 
     stripReasoning(text) {
@@ -238,10 +245,25 @@ class ClaudeClient {
         }
     }
 
+    // Resolves a raw LLM answer for a constrained (options-bearing) field against the real
+    // option list. Returns { value, confidence } where confidence is 'high' (score >= 60),
+    // 'low' (30-59, applied but worth a human glance), or null (no reasonable match — caller
+    // should leave the field unfilled rather than guess).
+    resolveConstrainedAnswer(rawAnswer, options) {
+        const match = this.bestOptionMatch(rawAnswer, options);
+        if (!match) return { value: null, confidence: null };
+        return { value: match.option, confidence: match.score >= 60 ? 'high' : 'low' };
+    }
+
     // One call for every still-unanswered field on a form, instead of one call per field —
     // cuts a 10-15 call burst (which was tripping Groq's free-tier rate limit) down to ~1.
+    // Returns { answers, flagged }: answers[q.id] is the resolved value (null if a
+    // constrained field had no confident match), flagged lists the ids that need a human
+    // glance (either unresolved or only a low-confidence match) instead of silently
+    // defaulting to the first option in the list.
     async generateBatchResponses({ questions, job, userProfile, resumeText }) {
         const answers = {};
+        const flagged = [];
         const remaining = [];
 
         questions.forEach((q) => {
@@ -250,12 +272,29 @@ class ClaudeClient {
             else remaining.push(q);
         });
 
-        if (!remaining.length) return answers;
+        if (!remaining.length) return { answers, flagged };
 
         if (config.llm.provider === 'template-only') {
-            remaining.forEach((q) => { answers[q.id] = this.fallbackResponse(); });
-            return answers;
+            remaining.forEach((q) => {
+                if (q.options) {
+                    answers[q.id] = null;
+                    flagged.push({ id: q.id, confidence: null });
+                } else {
+                    answers[q.id] = this.fallbackResponse();
+                }
+            });
+            return { answers, flagged };
         }
+
+        const applyResolved = (q, rawAnswer) => {
+            if (!q.options) {
+                answers[q.id] = rawAnswer || this.fallbackResponse();
+                return;
+            }
+            const { value, confidence } = this.resolveConstrainedAnswer(rawAnswer, q.options);
+            answers[q.id] = value;
+            if (confidence !== 'high') flagged.push({ id: q.id, confidence });
+        };
 
         const prompt = this.buildBatchPrompt({ questions: remaining, job, userProfile, resumeText });
         const maxTokens = Math.min(1500, 150 + remaining.length * 100);
@@ -265,23 +304,22 @@ class ClaudeClient {
             const parsed = this.parseBatchResponse(this.stripReasoning(text));
             if (!parsed) throw new Error('Batch response was not valid JSON.');
 
-            remaining.forEach((q) => {
-                answers[q.id] = parsed[q.id] || (q.options ? q.options[0] : this.fallbackResponse());
-            });
+            remaining.forEach((q) => applyResolved(q, parsed[q.id]));
         } catch (error) {
             if (this.logger?.warn) {
                 this.logger.warn(`Batch LLM call failed (${config.llm.provider}): ${error.message}. Falling back to per-question calls.`);
             }
             for (const q of remaining) {
                 if (q.options) {
-                    answers[q.id] = await this.generateSingleFromOptions({ question: q.question, options: q.options, job, userProfile, resumeText });
+                    const rawAnswer = await this.generateSingleFromOptions({ question: q.question, options: q.options, job, userProfile, resumeText });
+                    applyResolved(q, rawAnswer);
                 } else {
                     answers[q.id] = await this.generateResponse({ question: q.question, job, userProfile, resumeText });
                 }
             }
         }
 
-        return answers;
+        return { answers, flagged };
     }
 
     async generateSingleFromOptions({ question, options, job, userProfile, resumeText }) {
@@ -289,12 +327,12 @@ class ClaudeClient {
         try {
             const text = await this.callWithRetry(prompt, { maxTokens: 250 });
             const parsed = this.parseBatchResponse(this.stripReasoning(text));
-            return (parsed && parsed.q) || options[0];
+            return parsed && parsed.q;
         } catch (error) {
             if (this.logger?.warn) {
                 this.logger.warn(`Single-option LLM call failed (${config.llm.provider}): ${error.message}.`);
             }
-            return options[0];
+            return null;
         }
     }
 }

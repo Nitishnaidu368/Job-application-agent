@@ -1,5 +1,6 @@
 const { runFillEngine } = require('./fillEngineRunner');
 const { extractResumeText } = require('../../clients/resumeText');
+const learnedAnswers = require('./learnedAnswers');
 
 class LeverFiller {
     constructor({ logger, claudeClient, userProfile }) {
@@ -9,6 +10,11 @@ class LeverFiller {
     }
 
     async fillForm(page, job, resumePath) {
+        // Tracks questions the user explicitly typed "skip" for during this job's terminal
+        // prompts, so the verifyAndFixGaps retry pass below doesn't ask the same question
+        // again a few seconds later.
+        this.skippedLabels = new Set();
+
         const summary = await runFillEngine(page, this.userProfile, job.location);
 
         const succeeded = summary.results.filter((r) => r.success).length;
@@ -39,8 +45,9 @@ class LeverFiller {
             this.logger.info(`Settle pass re-filled ${revived.length} field(s) that reverted after upload: ${revived.map((r) => r.label).join(', ')}`);
         }
 
-        await this.fillRequiredGaps(page, job, resumePath);
-        await this.verifyAndFixGaps(page, job, resumePath);
+        const flagged = await this.fillRequiredGaps(page, job, resumePath);
+        const retryFlagged = await this.verifyAndFixGaps(page, job, resumePath);
+        return [...flagged, ...retryFlagged];
     }
 
     // Final check: confirm nothing required is still empty — whether from a field an ATS's own
@@ -51,13 +58,13 @@ class LeverFiller {
         let gaps = await page.evaluate(() => window.__jobAgentFillEngine.findRequiredEmptyFields());
         if (!gaps.length) {
             this.logger.info('Final verification: all required fields are filled.');
-            return;
+            return [];
         }
 
         this.logger.warn(`Final verification found ${gaps.length} required field(s) still empty (${gaps.map((g) => g.label).join(', ')}). Retrying once.`);
 
         await runFillEngine(page, this.userProfile, job.location);
-        await this.fillRequiredGaps(page, job, resumePath);
+        const flagged = await this.fillRequiredGaps(page, job, resumePath);
 
         gaps = await page.evaluate(() => window.__jobAgentFillEngine.findRequiredEmptyFields());
         if (gaps.length) {
@@ -65,6 +72,7 @@ class LeverFiller {
         } else {
             this.logger.info('Final verification: all required fields are filled after one retry.');
         }
+        return flagged;
     }
 
     async uploadFile(page, filePath, { hasInput, inputSelector, triggerSelector, label }) {
@@ -94,14 +102,39 @@ class LeverFiller {
         }
     }
 
+    // Applies a resolved value to a gap's field, routing click-groups through a real
+    // Playwright click and everything else through the browser engine's catch-all setter.
+    async applyGapValue(page, gap, value) {
+        if (gap.elementType === 'click-group') {
+            const applied = await this.clickGroupOption(page, gap, value);
+            if (!applied) {
+                this.logger.warn(`Could not click an option for field "${gap.label}" (click-group).`);
+            }
+            return;
+        }
+
+        const applied = await page.evaluate(
+            ({ id, elementType, value }) => window.__jobAgentFillEngine.applyCatchAllValue(id, elementType, value),
+            { id: gap.id, elementType: gap.elementType, value }
+        );
+
+        if (!applied) {
+            this.logger.warn(`Could not apply an answer to field "${gap.label}" (${gap.elementType}).`);
+        }
+    }
+
+    // Returns a "flagged" list of fields that need a human glance: either a field with no
+    // confident answer anywhere (learned store, terminal prompt skipped, no confident LLM
+    // match) — left unfilled rather than guessed — or one that was filled on a
+    // low-confidence LLM match.
     async fillRequiredGaps(page, job, resumePath) {
         const gaps = await page.evaluate(() => window.__jobAgentFillEngine.findRequiredEmptyFields());
-        if (!gaps.length) return;
+        if (!gaps.length) return [];
 
-        this.logger.info(`Found ${gaps.length} required field(s) still empty; answering via LLM/best-guess.`);
+        this.logger.info(`Found ${gaps.length} unanswered field(s); resolving via learned answers/LLM/best-guess.`);
 
         const checkboxGaps = gaps.filter((g) => g.elementType === 'checkbox');
-        const llmGaps = gaps.filter((g) => g.elementType !== 'checkbox');
+        const otherGaps = gaps.filter((g) => g.elementType !== 'checkbox');
 
         for (const gap of checkboxGaps) {
             await page.evaluate(
@@ -110,36 +143,84 @@ class LeverFiller {
             );
         }
 
-        if (!llmGaps.length) return;
+        const flagged = [];
+        const remaining = [];
+
+        // Learned-store pass: reuse a past answer for a question we've essentially seen
+        // before (fuzzy label match + matching options for constrained fields), skipping
+        // the LLM and the terminal prompt entirely.
+        for (const gap of otherGaps) {
+            const learned = learnedAnswers.findMatch(gap.label, gap.elementType, gap.options);
+            if (learned === null) {
+                remaining.push(gap);
+                continue;
+            }
+            await this.applyGapValue(page, gap, learned);
+        }
+
+        // Single-line text questions get asked directly rather than have the LLM invent a
+        // factual personal answer (notice period, salary expectation, etc). Long-form
+        // textarea questions and constrained fields fall through to the LLM path below.
+        const textGaps = remaining.filter((g) => g.elementType === 'text');
+        const llmGaps = remaining.filter((g) => g.elementType !== 'text');
+
+        for (const gap of textGaps) {
+            if (this.skippedLabels.has(gap.label)) {
+                flagged.push({ label: gap.label, options: null, required: gap.required, value: null, reason: 'skipped by user' });
+                continue;
+            }
+
+            const answer = await learnedAnswers.promptForAnswer(gap.label, gap.elementType, gap.options);
+            if (answer === null) {
+                this.skippedLabels.add(gap.label);
+                llmGaps.push(gap); // fall back to today's template/LLM-drafted path
+                continue;
+            }
+
+            learnedAnswers.saveAnswer(gap.label, gap.elementType, gap.options, answer);
+            this.logger.info(`Learned new answer for "${gap.label}": ${answer}`);
+            await this.applyGapValue(page, gap, answer);
+        }
+
+        if (!llmGaps.length) return flagged;
 
         const resumeText = await extractResumeText(resumePath);
-        const answers = await this.claudeClient.generateBatchResponses({
+        const { answers, flagged: flaggedIds } = await this.claudeClient.generateBatchResponses({
             questions: llmGaps.map((g) => ({ id: g.id, question: g.label, options: g.options })),
             job,
             userProfile: this.userProfile,
             resumeText
         });
+        const confidenceById = new Map(flaggedIds.map((f) => [f.id, f.confidence]));
 
         for (const gap of llmGaps) {
-            const value = answers[gap.id] || (gap.options ? gap.options[0] : this.claudeClient.fallbackResponse());
+            const value = gap.options ? answers[gap.id] : (answers[gap.id] || this.claudeClient.fallbackResponse());
 
-            if (gap.elementType === 'click-group') {
-                const applied = await this.clickGroupOption(page, gap, value);
-                if (!applied) {
-                    this.logger.warn(`Could not click an option for required field "${gap.label}" (click-group).`);
+            if (value === null || value === undefined) {
+                // No confident match among the real options — try asking directly (unless
+                // the user already skipped this exact question this job) before giving up.
+                if (!this.skippedLabels.has(gap.label)) {
+                    const answer = await learnedAnswers.promptForAnswer(gap.label, gap.elementType, gap.options);
+                    if (answer !== null) {
+                        learnedAnswers.saveAnswer(gap.label, gap.elementType, gap.options, answer);
+                        this.logger.info(`Learned new answer for "${gap.label}": ${answer}`);
+                        await this.applyGapValue(page, gap, answer);
+                        continue;
+                    }
+                    this.skippedLabels.add(gap.label);
                 }
+                flagged.push({ label: gap.label, options: gap.options, required: gap.required, value: null, reason: 'no confident match' });
                 continue;
             }
 
-            const applied = await page.evaluate(
-                ({ id, elementType, value }) => window.__jobAgentFillEngine.applyCatchAllValue(id, elementType, value),
-                { id: gap.id, elementType: gap.elementType, value }
-            );
-
-            if (!applied) {
-                this.logger.warn(`Could not apply an answer to required field "${gap.label}" (${gap.elementType}).`);
+            if (confidenceById.has(gap.id)) {
+                flagged.push({ label: gap.label, options: gap.options, required: gap.required, value, reason: 'low-confidence match' });
             }
+
+            await this.applyGapValue(page, gap, value);
         }
+
+        return flagged;
     }
 
     // Real Playwright click (trusted OS-level event) instead of a JS-level el.click() inside
