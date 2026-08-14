@@ -15,6 +15,15 @@ class Orchestrator {
         fs.mkdirSync(config.paths.outputDir, { recursive: true });
     }
 
+    // Each run's jobs.json/applications.json/summary.json fully describe that run, not a
+    // history — clear the previous run's files up front so a failed or shorter run never
+    // leaves stale results mixed in with (or mistaken for) the current one.
+    clearPreviousOutput() {
+        ['jobs.json', 'applications.json', 'summary.json'].forEach((fileName) => {
+            fs.rmSync(path.join(config.paths.outputDir, fileName), { force: true });
+        });
+    }
+
     writeJson(fileName, payload) {
         const filePath = path.join(config.paths.outputDir, fileName);
         fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
@@ -71,6 +80,7 @@ class Orchestrator {
 
     async run() {
         this.ensureOutputDir();
+        this.clearPreviousOutput();
 
         const runId = `run-${Date.now()}`;
         logger.info(`Starting run ${runId}`);
