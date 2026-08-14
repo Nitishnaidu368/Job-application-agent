@@ -150,7 +150,7 @@ class LeverFiller {
         // before (fuzzy label match + matching options for constrained fields), skipping
         // the LLM and the terminal prompt entirely.
         for (const gap of otherGaps) {
-            const learned = learnedAnswers.findMatch(gap.label, gap.elementType, gap.options);
+            const learned = await learnedAnswers.findMatch(gap.label, gap.elementType, gap.options, this.claudeClient, this.logger);
             if (learned === null) {
                 remaining.push(gap);
                 continue;

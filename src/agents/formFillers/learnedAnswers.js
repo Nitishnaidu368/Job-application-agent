@@ -42,16 +42,35 @@ function optionsOverlap(a, b) {
 // (a stored "text" answer shouldn't answer a "select"), and for constrained fields, the
 // stored option set must overlap with the current field's real options too — guards
 // against reusing an answer from a superficially similar-sounding but different dropdown.
-function findMatch(label, elementType, options) {
+//
+// Two lookup tiers: a cheap string match first (typos/minor wording drift), then — only
+// on a miss — an LLM semantic match (real paraphrases the string scorer can't see, e.g.
+// "Do you need sponsorship?" vs. a much longer differently-worded version of the same
+// question). claudeClient/logger are optional so callers that don't have them (e.g. a
+// plain string-only lookup) still work; the semantic tier is simply skipped without them.
+async function findMatch(label, elementType, options, claudeClient, logger) {
     const candidates = load().filter((entry) => entry.elementType === elementType);
     if (!candidates.length) return null;
 
-    const match = bestOptionMatch(label, candidates.map((entry) => entry.label));
-    if (!match || match.score < REUSE_THRESHOLD) return null;
+    const candidateLabels = candidates.map((entry) => entry.label);
+    const stringMatch = bestOptionMatch(label, candidateLabels);
+    let matchedLabel = stringMatch && stringMatch.score >= REUSE_THRESHOLD ? stringMatch.option : null;
+    let semantic = false;
 
-    const entry = candidates.find((e) => e.label === match.option);
+    if (!matchedLabel && claudeClient) {
+        matchedLabel = await claudeClient.matchSimilarQuestion(label, candidateLabels);
+        semantic = !!matchedLabel;
+    }
+
+    if (!matchedLabel) return null;
+
+    const entry = candidates.find((e) => e.label === matchedLabel);
     if (!entry) return null;
     if (!optionsOverlap(entry.options, options)) return null;
+
+    if (semantic && logger?.info) {
+        logger.info(`Recognized "${label}" as the same question as "${entry.label}"`);
+    }
 
     return entry.answer;
 }

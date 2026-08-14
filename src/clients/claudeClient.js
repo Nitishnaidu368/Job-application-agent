@@ -316,6 +316,35 @@ class ClaudeClient {
         return { answers, flagged };
     }
 
+    // Asks whether a newly-seen form question means the same thing as one already in the
+    // learned-answer store, even when the wording differs (e.g. "Do you need sponsorship?"
+    // vs. "Do you need or require any kind of future sponsorship..."). Only called when the
+    // cheap string match already missed. Returns the exact matching candidate string, or
+    // null if none matches (or the LLM is unavailable) — the caller falls back to asking.
+    async matchSimilarQuestion(label, candidateLabels) {
+        if (config.llm.provider === 'template-only' || !candidateLabels.length) return null;
+
+        const prompt = [
+            'You are matching job-application form questions that mean the same thing, even if worded differently.',
+            `New question: ${JSON.stringify(label)}`,
+            'Previously answered questions:',
+            JSON.stringify(candidateLabels),
+            'If the new question asks for essentially the same information as one of the previously answered questions, respond with that question\'s exact text, copied verbatim. Otherwise respond with exactly: NONE',
+            'Respond with nothing else — no explanation, no markdown.'
+        ].join('\n');
+
+        try {
+            const text = await this.callWithRetry(prompt, { maxTokens: 200 });
+            const answer = this.stripReasoning(text).trim();
+            return candidateLabels.includes(answer) ? answer : null;
+        } catch (error) {
+            if (this.logger?.warn) {
+                this.logger.warn(`Semantic question-match call failed (${config.llm.provider}): ${error.message}.`);
+            }
+            return null;
+        }
+    }
+
     async generateSingleFromOptions({ question, options, job, userProfile, resumeText }) {
         const prompt = this.buildBatchPrompt({ questions: [{ id: 'q', question, options }], job, userProfile, resumeText });
         try {
