@@ -15,6 +15,15 @@ class Orchestrator {
         fs.mkdirSync(config.paths.outputDir, { recursive: true });
     }
 
+    // Each run's jobs.json/applications.json/summary.json fully describe that run, not a
+    // history — clear the previous run's files up front so a failed or shorter run never
+    // leaves stale results mixed in with (or mistaken for) the current one.
+    clearPreviousOutput() {
+        ['jobs.json', 'applications.json', 'summary.json'].forEach((fileName) => {
+            fs.rmSync(path.join(config.paths.outputDir, fileName), { force: true });
+        });
+    }
+
     writeJson(fileName, payload) {
         const filePath = path.join(config.paths.outputDir, fileName);
         fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), 'utf8');
@@ -28,9 +37,10 @@ class Orchestrator {
                 if (item.status === 'submitted') acc.submitted += 1;
                 if (item.status === 'failed') acc.failed += 1;
                 if (item.status === 'skipped') acc.skipped += 1;
+                if (item.status === 'ready_for_review') acc.readyForReview += 1;
                 return acc;
             },
-            { totalProcessed: 0, submitted: 0, failed: 0, skipped: 0 }
+            { totalProcessed: 0, submitted: 0, failed: 0, skipped: 0, readyForReview: 0 }
         );
 
         const successRate = totals.totalProcessed
@@ -70,6 +80,7 @@ class Orchestrator {
 
     async run() {
         this.ensureOutputDir();
+        this.clearPreviousOutput();
 
         const runId = `run-${Date.now()}`;
         logger.info(`Starting run ${runId}`);
@@ -85,7 +96,7 @@ class Orchestrator {
         const summary = this.buildSummary(results);
         this.writeJson('summary.json', summary);
 
-        logger.info(`Run complete. Submitted: ${summary.submitted}, Failed: ${summary.failed}, Skipped: ${summary.skipped}`);
+        logger.info(`Run complete. Submitted: ${summary.submitted}, Ready for review: ${summary.readyForReview}, Failed: ${summary.failed}, Skipped: ${summary.skipped}`);
     }
 }
 

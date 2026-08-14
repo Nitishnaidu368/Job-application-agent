@@ -6,3 +6,4 @@ output/jobs.json
 output/applications.json
 output/summary.json
 .DS_Store
+data/learnedAnswers.json

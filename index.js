@@ -3,9 +3,8 @@ const { config } = require('./src/config');
 const { logger } = require('./src/logger');
 
 async function main() {
-    if (!config.anthropic.apiKey && !config.runtime.dryRun) {
-        logger.error('ANTHROPIC_API_KEY is missing. Copy .env.example to .env and add your key, or run npm run dry-run.');
-        process.exit(1);
+    if (config.llm.provider === 'template-only' && !config.runtime.dryRun) {
+        logger.warn('No LLM backend configured. Custom questions will use template and fallback responses only.');
     }
 
     const orchestrator = new Orchestrator();
