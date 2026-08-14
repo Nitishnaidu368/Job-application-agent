@@ -94,12 +94,6 @@ class ClaudeClient {
         return 'I would be happy to discuss this in more detail during the interview process.';
     }
 
-    // Kept as a thin wrapper so existing call sites/tests don't need to know the scorer
-    // moved to a shared module (learnedAnswers.js uses the same one for label matching).
-    bestOptionMatch(answer, options) {
-        return bestOptionMatch(answer, options);
-    }
-
     stripReasoning(text) {
         // Reasoning models (e.g. Qwen thinking mode) can emit <think>...</think> before the
         // real answer; that must never end up typed into an actual application form.
@@ -250,7 +244,7 @@ class ClaudeClient {
     // 'low' (30-59, applied but worth a human glance), or null (no reasonable match — caller
     // should leave the field unfilled rather than guess).
     resolveConstrainedAnswer(rawAnswer, options) {
-        const match = this.bestOptionMatch(rawAnswer, options);
+        const match = bestOptionMatch(rawAnswer, options);
         if (!match) return { value: null, confidence: null };
         return { value: match.option, confidence: match.score >= 60 ? 'high' : 'low' };
     }

@@ -1,16 +1,17 @@
 const assert = require('assert');
 const { config } = require('../src/config');
 const { ClaudeClient } = require('../src/clients/claudeClient');
+const { bestOptionMatch } = require('../src/clients/optionMatcher');
 
 const client = new ClaudeClient(console);
 
 // bestOptionMatch: confident, low-confidence, and no-match cases against a real option list.
 const visaOptions = ['US Citizen', 'Green Card Holder', 'Requires Sponsorship', 'Other'];
 
-assert.strictEqual(client.bestOptionMatch('US Citizen', visaOptions).option, 'US Citizen', 'exact match resolves');
-assert.strictEqual(client.bestOptionMatch('us citizen', visaOptions).score, 100, 'case-insensitive exact match scores 100');
-assert.strictEqual(client.bestOptionMatch('Nonsense answer with no overlap', visaOptions), null, 'unrelated text has no confident match');
-assert.strictEqual(client.bestOptionMatch('', visaOptions), null, 'empty answer has no match');
+assert.strictEqual(bestOptionMatch('US Citizen', visaOptions).option, 'US Citizen', 'exact match resolves');
+assert.strictEqual(bestOptionMatch('us citizen', visaOptions).score, 100, 'case-insensitive exact match scores 100');
+assert.strictEqual(bestOptionMatch('Nonsense answer with no overlap', visaOptions), null, 'unrelated text has no confident match');
+assert.strictEqual(bestOptionMatch('', visaOptions), null, 'empty answer has no match');
 
 // resolveConstrainedAnswer: high vs low confidence tiers, and the null (unresolved) case.
 assert.strictEqual(client.resolveConstrainedAnswer('US Citizen', visaOptions).confidence, 'high', 'exact match is high confidence');
